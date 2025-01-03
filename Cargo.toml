@@ -1,0 +1,23 @@
+[package]
+name = "kwd"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+regex-lite = "^0.1"
+path-clean="^1.0"
+[profile.release]
+lto = true          # Enable Link Time Optimization
+codegen-units = 1   # Reduce number of codegen units to increase optimizations.
+panic = 'abort'     # Abort on panic
+strip = true        # Strip symbols from binary*
+debug-assertions = false
+overflow-checks = false
+debug = false
+rpath = false
+incremental = false
+opt-level = 3
+
+[[bin]]
+name = "copier"
+path = "src/copier/main.rs"
