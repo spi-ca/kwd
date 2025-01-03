@@ -1,0 +1,6 @@
+## First, initialise the manifest
+#podman manifest create sangbumkim/kwd:v0.1.0
+## Build the image attaching them to the manifest
+#podman build --platform linux/amd64,linux/arm64  --manifest sangbumkim/kwd:v0.1.0 .
+## Finally publish the manifest
+#podman manifest push sangbumkim/kwd:v0.1.0
