@@ -29,7 +29,7 @@ fn main() {
 
     if let Ok(value) = env::var("KANIKO_IMAGE_TAGS") {
         env::remove_var("KANIKO_IMAGE_TAGS");
-        let pattern = Regex::new(r"^[a-zA-Z0-9_\\-.]+$").unwrap();
+        let pattern = Regex::new(r"^[-a-zA-Z0-9_\.]+$").unwrap();
         for tag in value.split(',') {
             let tag = tag.trim();
             if !pattern.is_match(tag) {
@@ -39,15 +39,13 @@ fn main() {
         }
     }
 
-    let image = match (repository.chars().last(), name.chars().last()) {
-        (Some('/'), Some('/')) => format!("{}{}", repository.trim_end_matches("/"), name),
-        (Some('/'), Some(_)) => format!("{}{}", repository, name),
-        (Some(_), Some('/')) => format!("{}{}", repository, name),
-        (Some(_), Some(_)) => format!("{}/{}", repository, name),
-        (None, Some(_)) => name,
-        (Some(_), None) => repository,
-        (None, None) => "".to_string(),
-    };
+    let image = format!(
+        "{}/{}",
+        repository.trim_end_matches("/"),
+        name.trim_start_matches("/")
+    )
+    .trim_matches(&['/'] as &[_])
+    .to_string();
 
     let mut args: Vec<_> = env::args().skip(1).collect();
     if !image.is_empty() {
