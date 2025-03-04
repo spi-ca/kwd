@@ -14,7 +14,7 @@
 
 ## Description
 
-This is a tool that performs destination tasks when attaching multiple tags to a single kaniko image build.
+Attaching multiple tags to a single kaniko image build.
 
 ## Configuration
 

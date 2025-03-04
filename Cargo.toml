@@ -1,5 +1,6 @@
 [package]
 name = "kwd"
+description = "Attaching multiple tags to a single kaniko image build."
 version = "1.0.0"
 edition = "2021"
 license = "MIT"
