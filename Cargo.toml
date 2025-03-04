@@ -2,10 +2,20 @@
 name = "kwd"
 version = "1.0.0"
 edition = "2021"
+license = "MIT"
+authors = ["Sangbum Kim <sangbumkim@amuz.es>"]
+repository = "https://github.com/spi-ca/kwd"
+include = [
+    "src/**/*",
+    "Cargo.toml",
+    "README.md",
+    "LICENSE"
+]
 
 [dependencies]
 regex-lite = "^0.1"
-path-clean="^1.0"
+path-clean = "^1.0"
+
 [profile.release]
 lto = true          # Enable Link Time Optimization
 codegen-units = 1   # Reduce number of codegen units to increase optimizations.
