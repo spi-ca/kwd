@@ -4,7 +4,7 @@
 ## Build
 ##
 FROM rust:alpine AS build
-LABEL org.opencontainers.image.authors="Sangbum Kim <sang>"
+LABEL org.opencontainers.image.authors="Sangbum Kim <sangbumkim@amuz.es>"
 
 # set the workdir and copy the source into it
 WORKDIR /app
