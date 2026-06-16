@@ -1,0 +1,17 @@
+sequenceDiagram
+    participant Caller
+    participant kwd
+    participant Kaniko
+    participant Registry
+
+    Caller->>kwd: start with CLI args + KANIKO_* env
+    kwd->>kwd: read and trim env vars
+    kwd->>kwd: insert latest tag
+    kwd->>kwd: split/validate KANIKO_IMAGE_TAGS
+    kwd->>kwd: build final image reference
+    alt image reference is empty
+        kwd->>Kaniko: exec Kaniko with forwarded CLI args only
+    else image reference present
+        kwd->>Kaniko: exec Kaniko with forwarded args + one --destination per tag
+        Kaniko-->>Registry: push if the full Kaniko invocation enables pushing
+    end

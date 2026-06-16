@@ -1,0 +1,7 @@
+flowchart LR
+    caller[CI job / shell script] --> kwd[kwd binary]
+    env[(KANIKO_* env vars)] --> kwd
+    args[Forwarded CLI args] --> kwd
+    kwd -->|exec + appended --destination flags| kaniko[Kaniko executor]
+    kaniko -.pushes when Kaniko is configured to push.-> registry[(Container registry)]
+    copier[copier helper binary] -.separate utility in same repo.-> caller
