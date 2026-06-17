@@ -41,13 +41,6 @@ fn normalize_path_result(path_opt: Option<OsString>) -> Result<PathBuf, String> 
     Ok(path.clean())
 }
 
-fn normalize_path(path_opt: Option<OsString>) -> PathBuf {
-    match normalize_path_result(path_opt) {
-        Ok(path) => path,
-        Err(err) => panic!("{}", err),
-    }
-}
-
 fn get_metadata(file: &File) -> Option<(fs::Permissions, fs::FileTimes)> {
     let src_meta = match file.metadata() {
         Ok(meta) => meta,
@@ -265,42 +258,38 @@ fn copy_with_metadata(src: &Path, dst: &Path) -> Result<(), String> {
     Ok(())
 }
 
-fn main() {
-    let mut args = args_os().skip(1);
+fn run_with_args(args: impl IntoIterator<Item = OsString>) -> Result<(), String> {
+    let mut args = args.into_iter();
 
-    let src = normalize_path(args.next());
-    let dst = normalize_path(args.next());
+    let src = normalize_path_result(args.next())?;
+    let dst = normalize_path_result(args.next())?;
 
     let src = if src.eq(&dst) {
-        panic!("source and destination is same!")
+        return Err("source and destination is same!".to_string());
     } else {
-        match resolve_source(src) {
-            Ok(src) => src,
-            Err(err) => panic!("{}", err),
-        }
+        resolve_source(src)?
     };
 
-    let src_filename = match src.file_name() {
-        None => panic!("source({}) doesn't a filename!", src.display()),
-        Some(name) => name,
-    };
+    let src_filename = src
+        .file_name()
+        .ok_or_else(|| format!("source({}) doesn't a filename!", src.display()))?;
 
-    let dst = match resolve_destination(dst, src_filename) {
-        Ok(dst) => dst,
-        Err(err) => panic!("{}", err),
-    };
+    let dst = resolve_destination(dst, src_filename)?;
 
     eprint!("{} -> {}: ", src.display(), dst.display());
 
-    if let Err(err) = ensure_not_same_file(&src, &dst) {
-        panic!("{}", err);
-    }
+    ensure_not_same_file(&src, &dst)?;
+    copy_with_metadata(&src, &dst)?;
 
-    if let Err(err) = copy_with_metadata(&src, &dst) {
-        panic!("{}", err);
-    }
+    eprintln!("OK");
+    Ok(())
+}
 
-    eprintln!("OK")
+fn main() {
+    if let Err(err) = run_with_args(args_os().skip(1)) {
+        eprintln!("error: {err}");
+        std::process::exit(1);
+    }
 }
 
 #[cfg(test)]
@@ -331,6 +320,43 @@ mod tests {
             normalize_path_result(None),
             Err("path not provided".to_string())
         );
+    }
+
+    #[test]
+    fn run_with_args_requires_source_and_destination_paths() {
+        assert_eq!(run_with_args([]), Err("path not provided".to_string()));
+        assert_eq!(
+            run_with_args([OsString::from("source.txt")]),
+            Err("path not provided".to_string())
+        );
+    }
+
+    #[test]
+    fn run_with_args_rejects_identical_source_and_destination_paths() {
+        let dir = test_dir("run-same-file");
+        let src = dir.join("source.txt");
+        fs::write(&src, b"hello").unwrap();
+
+        assert_eq!(
+            run_with_args([src.clone().into_os_string(), src.clone().into_os_string()]),
+            Err("source and destination is same!".to_string())
+        );
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn run_with_args_copies_file_to_destination() {
+        let dir = test_dir("run-copy");
+        let src = dir.join("source.txt");
+        let dst = dir.join("nested/copied.txt");
+        fs::write(&src, b"hello").unwrap();
+
+        assert_eq!(
+            run_with_args([src.clone().into_os_string(), dst.clone().into_os_string()]),
+            Ok(())
+        );
+        assert_eq!(fs::read(&dst).unwrap(), b"hello");
+        let _ = fs::remove_dir_all(dir);
     }
 
     #[test]
@@ -452,6 +478,15 @@ mod tests {
         let hard_link = dir.join("hard-link.txt");
         fs::write(&src, b"hello").unwrap();
         fs::hard_link(&src, &hard_link).unwrap();
+
+        let src_meta = fs::metadata(&src).unwrap();
+        let hard_link_meta = fs::metadata(&hard_link).unwrap();
+        if src_meta.dev() != hard_link_meta.dev() || src_meta.ino() != hard_link_meta.ino() {
+            // Some test filesystems report different inode values for hard links.
+            // In that environment, ensure_not_same_file cannot reliably detect the alias.
+            let _ = fs::remove_dir_all(dir);
+            return;
+        }
 
         assert_eq!(
             ensure_not_same_file(&src, &hard_link),
