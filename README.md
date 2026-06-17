@@ -113,7 +113,7 @@ copier <src> <dst>
 
 - Both paths are normalized to absolute, cleaned paths.
 - `src` must be provided, must exist, and must not resolve to the same path as `dst`.
-- The implementation expects `src` to resolve to a regular file.
+- `src` must be a regular file path; source symlinks are rejected instead of followed.
 - Parent directories for a non-existent `dst` are created automatically.
 - Existing symlink components in the destination path are rejected to avoid writing through an unexpected alias.
 - After copying, `copier` reapplies the source file permissions plus accessed/modified times to the destination file.

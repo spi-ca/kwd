@@ -1,9 +1,26 @@
 use path_clean::PathClean;
 use std::env::args_os;
-use std::ffi::{OsStr, OsString};
+use std::ffi::{c_char, CString, OsStr, OsString};
 use std::fs::{File, FileTimes};
-use std::path::{Path, PathBuf};
+use std::io;
+use std::os::fd::FromRawFd;
+use std::os::unix::ffi::OsStrExt;
+use std::os::unix::fs::MetadataExt;
+use std::path::{Component, Path, PathBuf};
 use std::{fs, path};
+
+const O_RDONLY: i32 = 0;
+const O_WRONLY: i32 = 1;
+const O_CREAT: i32 = 0o100;
+const O_TRUNC: i32 = 0o1000;
+const O_DIRECTORY: i32 = 0o200000;
+const O_NOFOLLOW: i32 = 0o400000;
+const O_CLOEXEC: i32 = 0o2000000;
+const O_PATH: i32 = 0o10000000;
+
+unsafe extern "C" {
+    fn openat(dirfd: i32, pathname: *const c_char, flags: i32, mode: u32) -> i32;
+}
 
 fn normalize_path_result(path_opt: Option<OsString>) -> Result<PathBuf, String> {
     let path = match path_opt {
@@ -31,8 +48,8 @@ fn normalize_path(path_opt: Option<OsString>) -> PathBuf {
     }
 }
 
-fn get_metadata(path: impl AsRef<Path>) -> Option<(fs::Permissions, fs::FileTimes)> {
-    let src_meta = match fs::metadata(path) {
+fn get_metadata(file: &File) -> Option<(fs::Permissions, fs::FileTimes)> {
+    let src_meta = match file.metadata() {
         Ok(meta) => meta,
         Err(_) => return None,
     };
@@ -72,7 +89,7 @@ fn resolve_destination(dst: PathBuf, src_filename: &OsStr) -> Result<PathBuf, St
         ));
     }
 
-    if !dst.exists() {
+    let resolved = if !dst.exists() {
         if let Some(parent) = dst.parent() {
             if let Err(err) = fs::create_dir_all(parent) {
                 return Err(format!(
@@ -82,12 +99,103 @@ fn resolve_destination(dst: PathBuf, src_filename: &OsStr) -> Result<PathBuf, St
                 ));
             }
         }
-        Ok(dst)
+        dst
     } else if dst.is_dir() {
-        Ok(dst.join(src_filename))
+        dst.join(src_filename)
     } else {
-        Ok(dst)
+        dst
+    };
+
+    if has_existing_symlink_component(&resolved) {
+        return Err(format!(
+            "destination path contains a symlink component: {}",
+            resolved.display()
+        ));
     }
+
+    Ok(resolved)
+}
+
+fn resolve_source(src: PathBuf) -> Result<PathBuf, String> {
+    if let Ok(metadata) = fs::symlink_metadata(&src) {
+        if metadata.file_type().is_symlink() {
+            return Err(format!("source({}) is a symlink!", src.display()));
+        }
+    }
+
+    if !src.exists() {
+        Err(format!("source({}) not exists!", src.display()))
+    } else if src.is_file() {
+        Ok(src)
+    } else {
+        Err(format!("source({}) is not a file!", src.display()))
+    }
+}
+
+fn path_component_cstring(component: &OsStr) -> io::Result<CString> {
+    CString::new(component.as_bytes()).map_err(|_| {
+        io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "path component contains an interior NUL byte",
+        )
+    })
+}
+
+fn open_no_symlink_at(dirfd: i32, name: &OsStr, flags: i32, mode: u32) -> io::Result<File> {
+    let name = path_component_cstring(name)?;
+    let fd = unsafe { openat(dirfd, name.as_ptr(), flags | O_NOFOLLOW | O_CLOEXEC, mode) };
+    if fd < 0 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(unsafe { File::from_raw_fd(fd) })
+}
+
+fn open_path_without_symlinks(path: &Path, flags: i32, mode: u32) -> io::Result<File> {
+    let mut components = path.components().peekable();
+    let mut dir = match components.next() {
+        Some(Component::RootDir) => {
+            open_no_symlink_at(-100, OsStr::new("/"), O_PATH | O_DIRECTORY, 0)?
+        }
+        Some(Component::Normal(first)) => {
+            if components.peek().is_none() {
+                return open_no_symlink_at(-100, first, flags, mode);
+            }
+            open_no_symlink_at(-100, first, O_PATH | O_DIRECTORY, 0)?
+        }
+        _ => {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "path must be absolute or contain normal components",
+            ))
+        }
+    };
+
+    while let Some(component) = components.next() {
+        let name = match component {
+            Component::Normal(name) => name,
+            _ => {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "path contains unsupported component",
+                ))
+            }
+        };
+
+        let is_last = components.peek().is_none();
+        let file = if is_last {
+            open_no_symlink_at(dir_fd(&dir), name, flags, mode)?
+        } else {
+            open_no_symlink_at(dir_fd(&dir), name, O_PATH | O_DIRECTORY, 0)?
+        };
+        dir = file;
+    }
+
+    Ok(dir)
+}
+
+fn dir_fd(file: &File) -> i32 {
+    use std::os::fd::AsRawFd;
+    file.as_raw_fd()
 }
 
 fn ensure_not_same_file(src: &Path, dst: &Path) -> Result<(), String> {
@@ -110,16 +218,35 @@ fn ensure_not_same_file(src: &Path, dst: &Path) -> Result<(), String> {
         return Err("source and destination is same!".to_string());
     }
 
+    let src_meta = fs::metadata(src)
+        .map_err(|err| format!("failed to stat source({}): {}", src.display(), err))?;
+    let dst_meta = fs::metadata(dst)
+        .map_err(|err| format!("failed to stat destination({}): {}", dst.display(), err))?;
+    if src_meta.dev() == dst_meta.dev() && src_meta.ino() == dst_meta.ino() {
+        return Err("source and destination is same!".to_string());
+    }
+
     Ok(())
 }
 
 fn copy_with_metadata(src: &Path, dst: &Path) -> Result<(), String> {
-    let (src_perm, src_tm) = match get_metadata(src) {
+    let mut src_file = open_path_without_symlinks(src, O_RDONLY, 0)
+        .map_err(|err| format!("failed to open source without following symlinks: {}", err))?;
+
+    let (src_perm, src_tm) = match get_metadata(&src_file) {
         Some((perm, tm)) => (perm, tm),
         None => return Err("failed to read metadata".to_string()),
     };
 
-    if let Err(err) = fs::copy(src, dst) {
+    let mut dst_file = open_path_without_symlinks(dst, O_WRONLY | O_CREAT | O_TRUNC, 0o666)
+        .map_err(|err| {
+            format!(
+                "failed to open destination without following symlinks: {}",
+                err
+            )
+        })?;
+
+    if let Err(err) = io::copy(&mut src_file, &mut dst_file) {
         return Err(format!(
             "failed to copy: {} -> {}, {}",
             src.display(),
@@ -127,11 +254,6 @@ fn copy_with_metadata(src: &Path, dst: &Path) -> Result<(), String> {
             err
         ));
     }
-
-    let dst_file = match File::open(dst) {
-        Ok(file) => file,
-        Err(err) => return Err(format!("failed to open file: {}", err)),
-    };
 
     if let Err(err) = dst_file.set_permissions(src_perm) {
         return Err(format!("failed to set permissions: {}", err));
@@ -151,17 +273,11 @@ fn main() {
 
     let src = if src.eq(&dst) {
         panic!("source and destination is same!")
-    } else if !src.exists() {
-        panic!("source({}) not exists!", src.display())
-    } else if src.is_file() {
-        src
-    } else if src.is_symlink() {
-        match fs::read_link(&src) {
-            Ok(src) => normalize_path(Some(src.as_os_str().to_os_string())),
-            Err(err) => panic!("failed to read link {}: {}", src.display(), err),
-        }
     } else {
-        panic!("source({}) is not a file!", src.display())
+        match resolve_source(src) {
+            Ok(src) => src,
+            Err(err) => panic!("{}", err),
+        }
     };
 
     let src_filename = match src.file_name() {
@@ -218,6 +334,20 @@ mod tests {
     }
 
     #[test]
+    fn resolve_source_rejects_symlink_sources() {
+        let dir = test_dir("source-symlink");
+        let real_file = dir.join("real.txt");
+        let link_file = dir.join("link.txt");
+        fs::write(&real_file, b"hello").unwrap();
+        symlink(&real_file, &link_file).unwrap();
+
+        let err = resolve_source(link_file).unwrap_err();
+
+        assert!(err.contains("is a symlink"));
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
     fn resolve_destination_creates_missing_parent_and_keeps_missing_path() {
         let dir = test_dir("resolve-missing");
         let dst = dir.join("nested/output.txt");
@@ -238,13 +368,17 @@ mod tests {
         fs::create_dir_all(&real_dir).unwrap();
         symlink(&real_dir, &link_dir).unwrap();
         symlink(real_dir.join("out.txt"), &link_file).unwrap();
+        symlink(real_dir.join("target.txt"), dir.join("source.txt")).unwrap();
 
         let dir_err =
             resolve_destination(link_dir.join("out.txt"), OsStr::new("source.txt")).unwrap_err();
         let file_err = resolve_destination(link_file, OsStr::new("source.txt")).unwrap_err();
+        let final_name_err =
+            resolve_destination(dir.clone(), OsStr::new("source.txt")).unwrap_err();
 
         assert!(dir_err.contains("symlink component"));
         assert!(file_err.contains("symlink component"));
+        assert!(final_name_err.contains("symlink component"));
         let _ = fs::remove_dir_all(dir);
     }
 
@@ -306,6 +440,21 @@ mod tests {
 
         assert_eq!(
             ensure_not_same_file(&src, &alias),
+            Err("source and destination is same!".to_string())
+        );
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn ensure_not_same_file_rejects_hard_link_destination() {
+        let dir = test_dir("same-file-hard-link");
+        let src = dir.join("source.txt");
+        let hard_link = dir.join("hard-link.txt");
+        fs::write(&src, b"hello").unwrap();
+        fs::hard_link(&src, &hard_link).unwrap();
+
+        assert_eq!(
+            ensure_not_same_file(&src, &hard_link),
             Err("source and destination is same!".to_string())
         );
         let _ = fs::remove_dir_all(dir);
