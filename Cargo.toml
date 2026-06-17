@@ -4,7 +4,6 @@ version = "0.1.1"
 edition = "2021"
 
 [dependencies]
-regex-lite = "^0.1"
 path-clean="^1.0"
 [profile.release]
 lto = true          # Enable Link Time Optimization
@@ -16,7 +15,7 @@ overflow-checks = false
 debug = false
 rpath = false
 incremental = false
-opt-level = 3
+opt-level = "z"
 
 [[bin]]
 name = "copier"
