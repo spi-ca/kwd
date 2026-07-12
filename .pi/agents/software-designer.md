@@ -1,7 +1,7 @@
 ---
 name: software-designer
 description: Design subagent that converts accepted requirements into architecture, implementation plan, risk analysis, and verification strategy.
-model: openai-codex/gpt-5.4
+model: openai-codex/gpt-5.6-sol
 thinking: high
 tools: read, grep, find, ls, bash
 ---

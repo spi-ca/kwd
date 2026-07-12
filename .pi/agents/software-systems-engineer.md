@@ -1,7 +1,7 @@
 ---
 name: software-systems-engineer
 description: Systems engineering subagent that validates container, runtime, dependency, deployment, performance, and operational constraints before implementation.
-model: openai-codex/gpt-5.4
+model: openai-codex/gpt-5.6-sol
 thinking: high
 tools: read, grep, find, ls, bash
 ---

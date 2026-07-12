@@ -1,7 +1,7 @@
 ---
 name: software-reviewer
 description: Review subagent that audits correctness, maintainability, regressions, security/performance risks, and completion evidence.
-model: openai-codex/gpt-5.4
+model: openai-codex/gpt-5.6-sol
 thinking: high
 tools: read, grep, find, ls, bash
 ---

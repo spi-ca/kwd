@@ -1,7 +1,7 @@
 ---
 name: user-representative
 description: User perspective subagent that turns requests into goals, acceptance criteria, blockers, and user-facing smoke scenarios.
-model: openai-codex/gpt-5.4-mini
+model: openai-codex/gpt-5.6-luna
 thinking: low
 tools: read, grep, find, ls
 ---

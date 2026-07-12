@@ -1,7 +1,7 @@
 ---
 name: software-implementer
 description: Implementation subagent that edits files according to an approved plan and runs focused validation.
-model: openai-codex/gpt-5.4
+model: openai-codex/gpt-5.6-terra
 thinking: high
 tools: read, grep, find, ls, bash, edit, write
 ---

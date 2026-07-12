@@ -1,7 +1,7 @@
 ---
 name: software-qa
 description: QA subagent that validates acceptance criteria with tests, checks, smoke scenarios, and reproducible evidence.
-model: openai-codex/gpt-5.4-mini
+model: openai-codex/gpt-5.6-luna
 thinking: medium
 tools: read, grep, find, ls, bash
 ---
